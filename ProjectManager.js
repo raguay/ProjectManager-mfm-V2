@@ -151,7 +151,7 @@ var ProjectManager = {
 <button style="border-radius: 10px; background-color: ${theme.textColor}; text: ${theme.backgroundColor}" onclick="globalThis.ProjectManager.editNpmFile()">Edit Npm File</button>
         `;
         var nfileContent = await lfs.readFile(nfile);
-        nfileContent = JSON.parse(nfiileContent);
+        nfileContent = JSON.parse(nfileContent);
         var keys = Object.keys(nfileContent.scripts);
         for (let i = 0; i < keys.length; i++) {
           html += `
@@ -188,7 +188,7 @@ var ProjectManager = {
   },
   runScript: async function() {
     var fs = ProjectManager.fs;
-    await fs.runCommandLine("'" + ProjectManager.pjFile + "' '" + ProjectManager.cdir + "'", (err, stdout) => {
+    await fs.runCommandLine("'" + ProjectManager.pjFile + "' '" + ProjectManager.cdir + "'", [], (err, stdout) => {
       if (err) {
         ProjectManager.logToUser(err);
       } else {
@@ -208,7 +208,7 @@ var ProjectManager = {
     ProjectManager.extMan.getExtCommand('editEntryCommand').command(ppath);
   },
   runMaskFile: async function(command) {
-    await ProjectManager.fs.runCommandLine(`mask ${command}`, (err, stdout) => {
+    await ProjectManager.fs.runCommandLine(`mask ${command}`, [], (err, stdout) => {
       if (err) {
         ProjectManager.logToUser(err);
       } else {
@@ -217,7 +217,7 @@ var ProjectManager = {
     }, ProjectManager.cdir);
   },
   runNpmFile: async function(command) {
-    await ProjectManager.fs.runCommandLine(`npm run ${command}`, (err, stdout) => {
+    await ProjectManager.fs.runCommandLine(`npm run ${command}`, [], (err, stdout) => {
       if (err) {
         ProjectManager.logToUser(err);
       } else {
@@ -250,6 +250,7 @@ var ProjectManager = {
     var projfile = await ProjectManager.getProjDirFile();
     ProjectManager.getProjDir('Which Project?', projfile, async (result) => {
       var fs = ProjectManager.fs;
+      if(typeof result.value !== 'undefined') result=result.value;
       var path = await fs.normalize(result);
       ProjectManager.extMan.getExtCommand('changeDir').command({
         path: path
@@ -283,7 +284,6 @@ var ProjectManager = {
         })
       }
     });
-    console.log(dirs);
     if (dirs.length > 0) ProjectManager.extMan.getExtCommand('pickItem').command(title, dirs, returnFun);
     else ProjectManager.extMan.getExtCommand('showMessage').command('Project Manager', 'Sorry, no projects defined yet.');
   },
@@ -304,13 +304,22 @@ var ProjectManager = {
         dir: cur.entry.dir,
         name: '.startproject'
       });
+      await fs.createDir({
+          dir: cur.entry.dir,
+        name: '.notes'
+      });
     });
   },
   remove: async function() {
     var pjf = await ProjectManager.getProjDirFile();
     ProjectManager.getProjDir('Which Project?', pjf, async (result) => {
       var fs = ProjectManager.extMan.getLocalFS();
-      var path = await fs.normalize(result);
+      var path = '';
+      if(typeof result.value !== 'undefined') {
+        path = await fs.normalize(result.value);
+      } else {
+        path = await fs.normalize(result);
+      }
       var projs = await fs.readFile(pjf);
       projs = new String(projs).split('\n');
       projs = projs.filter(proj => {
@@ -326,7 +335,11 @@ var ProjectManager = {
   openNote: function() {
     if (ProjectManager.noteDir !== '') {
       ProjectManager.getProjNote('Which Note?', ProjectManager.noteDir, result => {
-        ProjectManager.extMan.getExtCommand('editEntryCommand').command(result);
+        if(typeof result.value !== 'undefined') {
+          ProjectManager.extMan.getExtCommand('editEntryCommand').command(result.value);
+        } else {
+          ProjectManager.extMan.getExtCommand('editEntryCommand').command(result);
+        }
       });
     } else {
       ProjectManager.extMan.getExtCommand('showMessage').command('Project Manager', 'Project directory not set.')
@@ -367,7 +380,7 @@ var ProjectManager = {
     }
   },
   setNoteExt: function() {
-    ProjectManager.extMan.getExtCommand('askQuestion').command('Project Manager', 'What is the note\'s name?', async (result) => {
+    ProjectManager.extMan.getExtCommand('askQuestion').command('Project Manager', 'What is the note\'s extension?', async (result) => {
       ProjectManager.noteExt = result.trim();
       await ProjectManager.savePrefs();
     });
@@ -400,34 +413,22 @@ var ProjectManager = {
     //
     // See if they have the project manager for fig installed and using.
     //
-    var tempf = await fs.appendPath(ProjectManager.hdir, '.projectFiles/projectmanager.json');
+    var cdir = await fs.getConfigDir();
+    tempf = await fs.appendPath(cdir, 'templates.json');
     if (await fs.fileExists(tempf)) {
       ProjectManager.templates = await fs.readFile(tempf);
       ProjectManager.templates = JSON.parse(ProjectManager.templates);
-      ProjectManager.templates = ProjectManager.templates.templates;
     } else {
-      var cdir = await fs.getConfigDir();
-      tempf = await fs.appendPath(cdir, 'templates.json');
-      if (await fs.fileExists(tempf)) {
-        ProjectManager.templates = await fs.readFile(tempf);
-        ProjectManager.templates = JSON.parse(ProjectManager.templates);
-      } else {
-        //
-        // They have never ran templates. Add the default and return it.
-        //
-        ProjectManager.templates = [{
-          name: "Svelte Template",
-          templateDirUrl: "sveltejs/template",
-          local: false,
-          runScript: "npm install;"
-        }, {
-          name: "Sapper Template",
-          templateDirUrl: "sveltejs/sapper-template#rollup",
-          local: false,
-          runScript: "npm install;"
-        }];
-        await ProjectManager.saveTemplateFile();
-      }
+      //
+      // They have never ran templates. Add the default and return it.
+      //
+      ProjectManager.templates = [{
+        name: "Svelte Template",
+        templateDirUrl: "sveltejs/template",
+        local: false,
+        runScript: "npm install;"
+      }];
+      await ProjectManager.saveTemplateFile();
     }
     return (ProjectManager.templates);
   },
@@ -436,27 +437,13 @@ var ProjectManager = {
     // See if they have the project manager for fig installed and using.
     //
     var fs = ProjectManager.extMan.getLocalFS();
-    var tempf = await fs.appendPath(ProjectManager.hdir, '.projectFiles/projectmanager.json');
-    var templates = {};
-    if (await fs.fileExists(tempf)) {
-      //
-      // There is a fig templates file. Get it.
-      //
-      templates = fs.readFile(tempf);
-      templates = JSON.parse(templates);
-      templates.templates = ProjectManager.templates;
-    } else {
-      //
-      // No fig based templates, create our own.
-      //
-      var cdir = await fs.getConfigDir();
-      tempf = await fs.appendPath(cdir, 'templates.json');
-      templates = ProjectManager.templates;
-    }
+    var cdir = await fs.getConfigDir();
+    tempf = await fs.appendPath(cdir, 'templates.json');
+ 
     //
     // Write the template file.
     //
-    await fs.writeFile(tempf, JSON.stringify(templates));
+    await fs.writeFile(tempf, JSON.stringify(ProjectManager.templates));
   },
   getTemplate: async function(title, returnFun) {
     var templates = await ProjectManager.getTemplateFile();
@@ -475,6 +462,7 @@ var ProjectManager = {
       //
       // Get the template from the array of templates.
       //
+      if(typeof name.value !== "undefined") name = name.value;
       var templates = await ProjectManager.getTemplateFile();
       var template = templates.find(item => item.name === name);
 
@@ -487,7 +475,7 @@ var ProjectManager = {
         //
         // It's a local template on the computer. Copy the contents.
         //
-        await fs.runCommandLine(`cp -R '${template.templateDirUrl}/' '${cur.entry.dir}';`, async (err, stdout) => {
+        await fs.runCommandLine(`cp -R '${template.templateDirUrl}/' '${cur.entry.dir}';`, [], async (err, stdout) => {
           if (err) {
             ProjectManager.logToUser(err);
             console.log('Installing Template: ');
@@ -497,21 +485,21 @@ var ProjectManager = {
             //
             // Run the install script.
             //
-            await fs.runCommandLine(`${template.runScript}`, (err, stdout) => {
+            await fs.runCommandLine(`${template.runScript}`, [], (err, stdout) => {
               if (err) ProjectManager.logToUser(err);
               ProjectManager.logToUser(stdout);
-            }, {}, {
-              cwd: cur.entry.dir
-            });
+            },
+            cur.entry.dir
+            );
           }
-        }, {}, {
-          cwd: cur.entry.dir
-        });
+        }, 
+        cur.entry.dir
+        );
       } else {
         //
         // It's a web template. Copy it down to the directory.
         //
-        await fs.runCommandLine(`npx degit --force '${template.templateDirUrl}' '${cur.entry.dir}';`, async (err, stdout) => {
+        await fs.runCommandLine(`npx degit --force '${template.templateDirUrl}' '${cur.entry.dir}';`, [], async (err, stdout) => {
           if (err) {
             ProjectManager.logToUser(err);
             console.log('Installing web template: ');
@@ -522,16 +510,16 @@ var ProjectManager = {
             //
             // Run the install script.
             //
-            await fs.runCommandLine(`${template.runScript}`, (err, stdout) => {
+            await fs.runCommandLine(`${template.runScript}`, [], (err, stdout) => {
               if (err) ProjectManager.logToUser(err);
               ProjectManager.logToUser(stdout);
-            }, {}, {
-              cwd: cur.entry.dir
-            });
+            },
+            cur.entry.dir
+            );
           }
-        }, {}, {
-          cwd: cur.entry.dir
-        });
+        },
+        cur.entry.dir
+        );
       }
       //
       // Make the Notes directory and the startup script for the project.
@@ -551,10 +539,13 @@ var ProjectManager = {
       //
       // Get the install script to run.
       //
+      if(typeof name.value !== "undefined") name = name.value;
       setTimeout(() => {
         ProjectManager.extMan.getExtCommand('askQuestion').command('Project Manager', 'What is the GitHub template name?', (wtmp) => {
+          if(typeof wtmp.value !== "undefined") wtmp = wtmp.value;
           setTimeout(() => {
             ProjectManager.extMan.getExtCommand('askQuestion').command('Project Manager', 'What is the install command line?', async (script) => {
+              if(typeof script.value !== "undefined") script = script.value;
               templates.push({
                 name: name,
                 templateDirUrl: wtmp,
@@ -580,8 +571,10 @@ var ProjectManager = {
       //
       // Get the install script to run.
       //
+      if(typeof name.value !== "undefined") name = name.value;
       setTimeout(() => {
         ProjectManager.extMan.getExtCommand('askQuestion').command('Project Manager', 'What is the install command line?', async (script) => {
+          if(typeof script.value !== "undefined") script = script.value;
           templates.push({
             name: name,
             templateDirUrl: cur.entry.dir,
@@ -599,6 +592,7 @@ var ProjectManager = {
       //
       // Remove the template from the array of templates.
       //
+      if(typeof name.value !== "undefined") name = name.value;
       var templates = await ProjectManager.getTemplateFile();
       ProjectManager.templates = templates.filter(item => item.name !== name);
       await ProjectManager.saveTemplateFile();
@@ -609,6 +603,7 @@ var ProjectManager = {
       //
       // Get the template from the array of templates.
       //
+      if(typeof name.value !== "undefined") name = name.value;
       var templates = await ProjectManager.getTemplateFile();
       var template = templates.find(item => item.name === name);
       if (template.local) {
@@ -624,7 +619,7 @@ var ProjectManager = {
         // Open the website for the template.
         //
         const lfs = ProjectManager.extMan.getLocalFS();
-        await lfs.runCommandLine(`open 'https://GitHub.com/${template.templateDirUrl}';`, (err, stdout) => {
+        await lfs.runCommandLine(`open 'https://GitHub.com/${template.templateDirUrl}';`, [], (err, stdout) => {
           if (err) {
             ProjectManager.logToUser(err);
             console.log('Opening web template: ');
@@ -632,7 +627,7 @@ var ProjectManager = {
           } else {
             ProjectManager.logToUser(stdout);
           }
-        }, {}, {});
+        }, '.');
       }
     });
   }
